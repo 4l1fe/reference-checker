@@ -1,7 +1,7 @@
 from pathlib import Path
 from dataclasses import dataclass, field
 from functools import partial, lru_cache
-from typing import List
+from typing import List, Tuple
 from enum import Enum
 from statistics import median
 
@@ -13,11 +13,15 @@ from matplotlib import font_manager
 from matplotlib.patches import FancyBboxPatch
 from structlog import get_logger, configure, make_filtering_bound_logger
 from benedict import benedict
-from more_itertools import unzip
 
 
 FONT_FAMILY = 'Roboto'
+SIZE_DEFAULT = 40
 SIZE_K = 40
+TOML_COLOR = 'tab:purple'
+ERROR_COLOR = 'tab:red'
+FILE_COLOR = 'tab:cyan'
+EDGE_COLOR = 'tab:blue'
 font_files = font_manager.findSystemFonts(fontpaths=['/usr/local/share/fonts/r'])
 for font_file in font_files:
     font_manager.fontManager.addfont(font_file)
@@ -37,8 +41,8 @@ class ErrorTypes(Enum):
 
 @dataclass
 class NodeAttr:
-    color: str = 'purple'
-    size: int = 20
+    color: str = TOML_COLOR
+    size: int = SIZE_DEFAULT
     error: ErrorTypes = None
 
 
@@ -94,7 +98,7 @@ class TomlNodeReferences:
         color = source_node.attrs.color
 
         if key == 'reference':
-            ref_node = node_fabric(value, color, reference=True, source_dir=source_dir)
+            ref_node = node_fabric(value, reference=True, source_dir=source_dir)
             self._refs.append(ref_node)
             logger.debug('One ref added.', node=source_node, reference_node=ref_node)
         elif key == 'references':
@@ -111,13 +115,13 @@ class TomlNodeReferences:
 
     def _check_modify(self):
         for ref_node in self._get_all():
-            # todo check ref abs path error
+            # todo check ref abs path error. Has to be only relative of source dir
             # todo check out of scope error
 
             flag = ref_node.path.exists()
             if not flag:
                 ref_node.attrs.error = ErrorTypes.NOT_EXIST
-                ref_node.attrs.color = 'red'
+                ref_node.attrs.color = ERROR_COLOR
             logger.debug('Ref exists.', flag=flag, path=ref_node)
             yield ref_node
 
@@ -135,7 +139,7 @@ def node_fabric(str_or_path, color=None, reference=False, source_dir: Path = Non
     elif path.suffix == '.toml':
         node = TomlNode(path=path, attrs=attrs)
     else:
-        attrs.color = 'mediumpurple'
+        attrs.color = FILE_COLOR
         node = Node(path=path, attrs=attrs)
 
     return node
@@ -194,15 +198,25 @@ def check(path: Path):
     
 
 @cli.command()
-def create_plot(paths: List[Path], output_file="plot.png", no_relations: bool = False,
-                no_names: bool = False, layout: str = 'random', dpi: int = 200):
+def create_plot(paths: List[Path], output_file="plot.png", relations: bool = False,
+                names: bool = False, emphasize: bool = False,  layout: str = 'random', dpi: int = 200):
     """Display files and their references"""
+
+    def make_emphasizing_coefficients(graph_) -> Tuple[dict, dict]:
+        """Make the size coefficients depended on neighbors count"""
+
+        node_nbr_counts = {graph_id: len(nbrs) for (graph_id, nbrs) in graph_.adjacency()}
+        nbr_median = median(node_nbr_counts.values())
+        nbr_cnt_groups_asc = sorted(filter(lambda nbr_count: nbr_count > nbr_median,
+                                           set(node_nbr_counts.values())))
+        nbr_cnt_groups_k = {group: group / nbr_cnt_groups_asc[0] * SIZE_K for group in nbr_cnt_groups_asc}
+        return node_nbr_counts, nbr_cnt_groups_k
 
     def subplot(path, _layout=None):
         source_nodes = list(nodes_from_files(path))
         logger.debug('Subplot nodes.', subplot=path.name, nodes=source_nodes)
 
-        graph = create_graph(source_nodes, add_edges=not no_relations)
+        graph = create_graph(source_nodes, add_edges=relations)
         layout = networkx.random_layout(graph)
         if _layout == 'kamada kawai':
             layout = networkx.kamada_kawai_layout(graph)
@@ -211,22 +225,28 @@ def create_plot(paths: List[Path], output_file="plot.png", no_relations: bool = 
         elif _layout == 'circular':
             layout = networkx.circular_layout(graph)
 
-        # make the size coefficients depend on neighbors count
-        node_nbr_counts = {graph_id: len(nbrs) for (graph_id, nbrs) in graph.adjacency()}
-        nbr_mean = median(node_nbr_counts.values())
-        nbr_cnt_groups_asc = sorted(filter(lambda nbr_count: nbr_count > nbr_mean,
-                                   set(node_nbr_counts.values())))
-        nbr_cnt_groups_k = {group: group/nbr_cnt_groups_asc[0]*SIZE_K for group in nbr_cnt_groups_asc}
-
         colors, sizes = [], []
+        groups, coefficients = make_emphasizing_coefficients(graph)
         for graph_id, node_attr in graph.nodes.data('attrs'):
             colors.append(node_attr.color)
-            k = nbr_cnt_groups_k.get(node_nbr_counts[graph_id], 0)
-            size = node_attr.size + k
+            size = node_attr.size
+            if emphasize:
+                k = coefficients.get(groups[graph_id], 0)
+                size = size + k
             sizes.append(size)
-        labels = {} if no_names else {node_id: node_id.name for node_id in graph.nodes}
-        # labels = {} if no_names else {node_id: (name:=node_id.name if node_attrs.error else '') for node_id, node_attrs in graph.nodes.data('attrs')}
-        # labels = {}
+
+        labels = {}
+        for graph_id, node_attr in graph.nodes.data('attrs'):
+            if not names:
+                break
+
+            if not emphasize:  # all are labeled
+                labels[graph_id] = graph_id.name
+                continue
+
+            if (emphasize and coefficients.get(groups[graph_id])) \
+                    or node_attr.error:
+                labels[graph_id] = graph_id.name
 
         networkx.draw(graph, pos=layout,
                       with_labels=True, labels=labels, verticalalignment='bottom', horizontalalignment='left',
@@ -234,8 +254,8 @@ def create_plot(paths: List[Path], output_file="plot.png", no_relations: bool = 
                       font_size=8, width=0.2, font_family=FONT_FAMILY, font_color='black',
                       linewidths=0.4, edgecolors='white',
                       bbox={'edgecolor': 'black', 'facecolor': 'white', 'linewidth': 0.2,
-                            'boxstyle': 'round', 'alpha': 0.7},
-                      edge_color='black')  # edges between nodes
+                            'boxstyle': 'round', 'alpha': 0.3},
+                      edge_color=EDGE_COLOR)  # edges between nodes
 
     for path in paths:
         check(path)
@@ -243,7 +263,7 @@ def create_plot(paths: List[Path], output_file="plot.png", no_relations: bool = 
     for i, source_dir in enumerate(paths, start=1):
         nrows, ncols, idx = len(paths), 1, i
         ax = plt.subplot(nrows, ncols, idx)
-        title = strip_home_dir(source_dir).parts[0]
+        title = strip_home_dir(source_dir).name
         ax.set_title(title, font=FONT_FAMILY)
         subplot(source_dir, _layout=layout)
 

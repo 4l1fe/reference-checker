@@ -41,7 +41,7 @@ reference = "cert.pem"
 Run checking and creating a plot.
 
 ```shell
-$ python references.py create-plot --dpi 200 --layout circular secrets
+$ python references.py create-plot --relations --layout circular --names --output-file demo.png demo-secrets
 [error    ] Error.
 ```
 
