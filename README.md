@@ -2,6 +2,8 @@
 
 Having dozens of accounts and their relations require convenient management to keep them updated. Updating is manual ,therefore, the utility is auxiliary.
 
+The [article](https://www.kvdm.dev/articles/storing-related-accounts-data-in-the-toml-files-visualization-networkx-graph/) demonstrating a real usage.
+
 ## Basic concept
 
 Accounts are `toml` files that contain sensitive data where every file can refer to any other type of one by `reference` keyword.

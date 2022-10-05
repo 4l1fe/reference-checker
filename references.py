@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 from dataclasses import dataclass, field
 from functools import partial, lru_cache
@@ -10,8 +11,10 @@ import networkx
 import typer
 import matplotlib.pyplot as plt
 from matplotlib import font_manager
-from matplotlib.patches import FancyBboxPatch
 from structlog import get_logger, configure, make_filtering_bound_logger
+from structlog.contextvars import merge_contextvars
+from structlog.dev import ConsoleRenderer, _use_colors, set_exc_info
+from structlog.processors import add_log_level, StackInfoRenderer
 from benedict import benedict
 
 
@@ -82,11 +85,15 @@ class TomlNodeReferences:
     def __init__(self, node: TomlNode):
         self.node = node
         self._refs = list()
+        self._log_error = True
+        self._log_checks = True
 
     def get_all(self):
+        self._log_error = False
+        self._log_checks = False
         return self._check_modify()
         
-    def checks_passed(self) -> list:
+    def checks_passed(self) -> bool:
         for ref_node in self._check_modify():
             if ref_node.attrs.error:
                 return False
@@ -115,14 +122,20 @@ class TomlNodeReferences:
 
     def _check_modify(self):
         for ref_node in self._get_all():
-            # todo check ref abs path error. Has to be only relative of source dir
+            # todo check ref abs path error. Has to be only relative to source dir
             # todo check out of scope error
 
+            logger_ = logger.bind(node=self.node.graph_id, reference=ref_node.raw_ref)
             flag = ref_node.path.exists()
-            if not flag:
+
+            if flag and self._log_checks:
+                logger_.info("Reference exists.")
+            elif not flag:
                 ref_node.attrs.error = ErrorTypes.NOT_EXIST
                 ref_node.attrs.color = ERROR_COLOR
-            logger.debug('Ref exists.', flag=flag, path=ref_node)
+                if self._log_error:
+                    logger_.error("Reference doesn't exist.")
+
             yield ref_node
 
 
@@ -192,14 +205,15 @@ def check(path: Path):
     if is_valid:
         logger.info('Success.')
     else:
-        logger.error('Error.')
+        logger.error('Fail.')
 
     return is_valid
     
 
 @cli.command()
 def create_plot(paths: List[Path], output_file="plot.png", relations: bool = False,
-                names: bool = False, emphasize: bool = False,  layout: str = 'random', dpi: int = 200):
+                names: bool = False, emphasize: bool = False,  layout: str = 'random', dpi: int = 200,
+                title: bool = False):
     """Display files and their references"""
 
     def make_emphasizing_coefficients(graph_) -> Tuple[dict, dict]:
@@ -217,13 +231,13 @@ def create_plot(paths: List[Path], output_file="plot.png", relations: bool = Fal
         logger.debug('Subplot nodes.', subplot=path.name, nodes=source_nodes)
 
         graph = create_graph(source_nodes, add_edges=relations)
-        layout = networkx.random_layout(graph)
+        layout_ = networkx.random_layout(graph)
         if _layout == 'kamada kawai':
-            layout = networkx.kamada_kawai_layout(graph)
+            layout_ = networkx.kamada_kawai_layout(graph)
         elif _layout == 'spring':
-            layout = networkx.spring_layout(graph, k=1)
+            layout_ = networkx.spring_layout(graph, k=1)
         elif _layout == 'circular':
-            layout = networkx.circular_layout(graph)
+            layout_ = networkx.circular_layout(graph)
 
         colors, sizes = [], []
         groups, coefficients = make_emphasizing_coefficients(graph)
@@ -248,7 +262,7 @@ def create_plot(paths: List[Path], output_file="plot.png", relations: bool = Fal
                     or node_attr.error:
                 labels[graph_id] = graph_id.name
 
-        networkx.draw(graph, pos=layout,
+        networkx.draw(graph, pos=layout_,
                       with_labels=True, labels=labels, verticalalignment='bottom', horizontalalignment='left',
                       node_shape='o', node_size=list(sizes), node_color=list(colors),
                       font_size=8, width=0.2, font_family=FONT_FAMILY, font_color='black',
@@ -263,8 +277,9 @@ def create_plot(paths: List[Path], output_file="plot.png", relations: bool = Fal
     for i, source_dir in enumerate(paths, start=1):
         nrows, ncols, idx = len(paths), 1, i
         ax = plt.subplot(nrows, ncols, idx)
-        title = strip_home_dir(source_dir).name
-        ax.set_title(title, font=FONT_FAMILY)
+        if title:
+            title = strip_home_dir(source_dir).name
+            ax.set_title(title, font=FONT_FAMILY)
         subplot(source_dir, _layout=layout)
 
     plt.savefig(output_file, dpi=dpi)
@@ -272,5 +287,17 @@ def create_plot(paths: List[Path], output_file="plot.png", relations: bool = Fal
 
 if __name__ == '__main__':
     import logging
-    configure(wrapper_class=make_filtering_bound_logger(logging.INFO),)
+    configure(wrapper_class=make_filtering_bound_logger(logging.INFO),
+              processors=[
+                        merge_contextvars,
+                        add_log_level,
+                        StackInfoRenderer(),
+                        set_exc_info,
+                        ConsoleRenderer(
+                            colors=_use_colors
+                            and sys.stdout is not None
+                            and hasattr(sys.stdout, "isatty")
+                            and sys.stdout.isatty()
+                        ),
+                    ])
     cli()
