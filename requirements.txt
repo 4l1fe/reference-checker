@@ -1,0 +1,6 @@
+matplotlib==3.5.2
+networkx==2.8.6
+python-benedict==0.25.3
+structlog==22.1.0
+toml==0.10.2
+typer==0.6.1
