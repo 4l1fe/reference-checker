@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 import sys
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -208,8 +209,8 @@ def check(path: Path):
         logger.error('Fail.')
 
     return is_valid
-    
 
+    
 @cli.command()
 def create_plot(paths: List[Path], output_file="plot.png", relations: bool = False,
                 names: bool = False, emphasize: bool = False,  layout: str = 'random', dpi: int = 200,
@@ -238,6 +239,8 @@ def create_plot(paths: List[Path], output_file="plot.png", relations: bool = Fal
             layout_ = networkx.spring_layout(graph, k=1)
         elif _layout == 'circular':
             layout_ = networkx.circular_layout(graph)
+        elif _layout == 'planar':
+            layout_ = networkx.planar_layout(graph, scale=3)
 
         colors, sizes = [], []
         groups, coefficients = make_emphasizing_coefficients(graph)
@@ -265,7 +268,7 @@ def create_plot(paths: List[Path], output_file="plot.png", relations: bool = Fal
         networkx.draw(graph, pos=layout_,
                       with_labels=True, labels=labels, verticalalignment='bottom', horizontalalignment='left',
                       node_shape='o', node_size=list(sizes), node_color=list(colors),
-                      font_size=8, width=0.2, font_family=FONT_FAMILY, font_color='black',
+                      font_size=5, width=0.2, font_family=FONT_FAMILY, font_color='black',
                       linewidths=0.4, edgecolors='white',
                       bbox={'edgecolor': 'black', 'facecolor': 'white', 'linewidth': 0.2,
                             'boxstyle': 'round', 'alpha': 0.3},

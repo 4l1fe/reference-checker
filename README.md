@@ -43,8 +43,11 @@ reference = "cert.pem"
 Run checking and creating a plot.
 
 ```shell
-$ python references.py create-plot --relations --layout circular --names --output-file demo.png demo-secrets
-[error    ] Error.
+$ python3 references.py create-plot --layout "kamada kawai" --relations --emphasize --names --dpi 400 --output-file demo.png accounts-folder
 ```
 
 ![](demo.png)
+
+## TO DO
+
+- [ ] Add per node subplots image colored in chess board way
